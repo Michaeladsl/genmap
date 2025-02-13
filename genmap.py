@@ -4,13 +4,14 @@ import subprocess
 import re
 import json
 import getpass
+import argparse
 from datetime import datetime
 from rich.console import Console
 from pyfiglet import Figlet
 
-# Initialize console
-console = Console()
+# Global variables
 sudo_password = None
+input_file = None  # Will store the file provided with -iL (if any)
 
 # ✅ **Timestamped File Naming**
 def get_timestamp():
@@ -22,7 +23,7 @@ def print_banner():
     banner = fig.renderText("genMAP")
     console.print(f"[bold cyan]{banner}[/bold cyan]")
     console.print("[bold green]GenMAP: Automating Nmap Scans with Ease[/bold green]")
-    console.print(f"[yellow]Created by: K3strelSec | Version: 2.3.1 (Secondary Vulnerability Scan Fixed!)[/yellow]")
+    console.print("[yellow]Created by: K3strelSec | Version: 2.3.1 (Secondary Vulnerability Scan Fixed!)[/yellow]")
     console.print("[bold bright_red]---------------------------------------------------[/bold bright_red]")
     console.print("[bold cyan]Key:")
     console.print("[red]Red - Open Ports[/red]")
@@ -33,6 +34,9 @@ def print_banner():
     console.print("[purple]Purple - Active Directory / Domain Info[/purple]")
     console.print("")
     console.print("[bold bright_magenta]---------------------------------------------------[/bold bright_magenta]")
+
+# ✅ **Initialize Console**
+console = Console()
 
 # ✅ **Colorization Function**
 def colorize_output(output):
@@ -54,12 +58,14 @@ def colorize_output(output):
 # ✅ **Fixed `save_results()` to Accept 3 Arguments**
 def save_results(target, output, scan_type):
     timestamp = get_timestamp()
-    filename = f"genMAP_{scan_type}_scan_{target}_{timestamp}.txt"
+    # If scanning from file, use the basename for the filename
+    target_name = os.path.basename(target) if input_file else target
+    filename = f"genMAP_{scan_type}_scan_{target_name}_{timestamp}.txt"
     with open(filename, "w") as f:
         f.write(output)
     console.print(f"\n[bold cyan]Scan saved to: {filename}[/bold cyan]")
-    
-    # ✅ Define `parse_results()` before using it
+
+# ✅ **Parse Results Function**
 def parse_results(output):
     open_ports = re.findall(r"(\d+)/(tcp|udp)\s+open", output)
     vulnerabilities = list(set(re.findall(r"CVE-\d{4}-\d+", output)))  # Remove duplicates
@@ -89,9 +95,9 @@ def parse_results(output):
     general_info = []
     indicators = {
         "File Exposure": [r"(index of /|directory listing|filetype|file)"],
-        "Credentials": [r"(password|username|credentials|hash|login|admin)"],  # Expanded keyword detection
+        "Credentials": [r"(password|username|credentials|hash|login|admin)"],
         "Sensitive Files": [r"(robots.txt|sitemap.xml|exposed|backup|config|db|.pem|.key)"],
-        "Internal IPs": [r"(\d+\.\d+\.\d+\.\d+)"],  # Captures IPs found in scan results
+        "Internal IPs": [r"(\d+\.\d+\.\d+\.\d+)"],
         "Web Tech": [r"(PHP|WordPress|Drupal|Joomla|Apache|Tomcat|Node.js)"],
         "Miscellaneous": [r"(Public Key|Certificate|TLS|SSL|DNS|Docker|Kubernetes)"]
     }
@@ -105,7 +111,7 @@ def parse_results(output):
     # ✅ Print structured output with clear colorization
     console.print("\n[bold cyan]Parsed Data:[/bold cyan]")
     console.print(f"[red]Open Ports:[/red] {', '.join([p[0] for p in open_ports]) if open_ports else 'None'}")
-    console.print(f"[green]OS Details:[/green] {os_details}")  # ✅ Now includes "JUST GUESSING"
+    console.print(f"[green]OS Details:[/green] {os_details}")
     console.print(f"[blue]Service Info:[/blue] {', '.join(service_info) if service_info else 'None'}")
     console.print(f"[purple]Active Directory:[/purple] {', '.join(active_directory) if active_directory else 'None'}")
     console.print(f"[yellow]Vulnerabilities:[/yellow] {', '.join(vulnerabilities) if vulnerabilities else 'None'}")
@@ -191,12 +197,18 @@ def generate_exploitation_tips(open_ports, vulnerabilities, general_info):
 
 # **Run the First TCP Scan**
 def run_tcp_scan(target):
-    global sudo_password
+    global sudo_password, input_file
     if not sudo_password:
         console.print("\n[bold yellow]Please enter your sudo password for this scan:[/bold yellow]")
         sudo_password = getpass.getpass("Sudo Password: ")
 
-    cmd = ["nmap", "-sS", "-p-", "-T4", "-O", "-sV", "-sC", target]  # TCP SYN scan first
+    # Build the target portion for the command based on input_file presence
+    if input_file:
+        nmap_target = ["-iL", input_file]
+    else:
+        nmap_target = [target]
+
+    cmd = ["nmap", "-sS", "-p-", "-T4", "-O", "-sV", "-sC"] + nmap_target  # TCP SYN scan first
     console.print(f"\n[bold green]Running TCP Scan: {' '.join(cmd)}[/bold green]")
 
     process = subprocess.Popen(["sudo", "-S"] + cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -226,9 +238,15 @@ def run_tcp_scan(target):
 
 # **Run the Second UDP Scan**
 def run_udp_scan(target, discovered_ports):
+    global input_file
     console.print("\n[bold yellow]Running UDP Scan...[/bold yellow]")
 
-    cmd = ["nmap", "-sU", "--top-ports", "200", "-T4", target]  # Scan only top 100 UDP ports
+    if input_file:
+        nmap_target = ["-iL", input_file]
+    else:
+        nmap_target = [target]
+
+    cmd = ["nmap", "-sU", "--top-ports", "200", "-T4"] + nmap_target  # Scan only top 200 UDP ports
     console.print(f"\n[bold green]Running UDP Scan: {' '.join(cmd)}[/bold green]")
 
     process = subprocess.Popen(["sudo", "-S"] + cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -254,9 +272,15 @@ def run_udp_scan(target, discovered_ports):
 
 # **Run the Final Vulnerability Scan**
 def run_vuln_scan(target, discovered_ports):
+    global input_file
     console.print("\n[bold yellow]Running Final Vulnerability Scan...[/bold yellow]")
 
-    cmd = ["nmap", "-sV", "--script=vuln,vulners,http-enum,smb-enum-shares,rdp-enum-encryption", "-p", discovered_ports, target]
+    if input_file:
+        nmap_target = ["-iL", input_file]
+    else:
+        nmap_target = [target]
+
+    cmd = ["nmap", "-sV", "--script=vuln,vulners,http-enum,smb-enum-shares,rdp-enum-encryption", "-p", discovered_ports] + nmap_target
     console.print(f"\n[bold green]Running Vulnerability Scan: {' '.join(cmd)}[/bold green]")
 
     process = subprocess.Popen(["sudo", "-S"] + cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -280,10 +304,24 @@ def run_vuln_scan(target, discovered_ports):
 
 # **Main Function (Starts TCP First)**
 def main():
+    global input_file
     print_banner()
-    target = console.input("[bold yellow]Enter Target IP or domain: [/bold yellow]").strip()
+    parser = argparse.ArgumentParser(description="genMAP: Automating Nmap Scans with Ease")
+    parser.add_argument("-iL", dest="input_file", help="Input list of targets (file)")
+    parser.add_argument("-t", "--target", help="Single target IP or domain")
+    args = parser.parse_args()
+    
+    if args.input_file:
+        input_file = args.input_file
+        # Use the input file's basename for display/saving purposes
+        target = os.path.basename(input_file)
+        console.print(f"[bold yellow]Scanning targets from file: {input_file}[/bold yellow]")
+    elif args.target:
+        target = args.target
+    else:
+        target = console.input("[bold yellow]Enter Target IP or domain: [/bold yellow]").strip()
+    
     run_tcp_scan(target)
 
 if __name__ == "__main__":
     main()
-
